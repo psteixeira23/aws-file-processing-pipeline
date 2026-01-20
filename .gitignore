@@ -6,6 +6,9 @@
 
 # Maven build output
 target/
+.scannerwork/
+.sonar/
+dependency-reduced-pom.xml
 
 # Maven wrapper
 .mvn/wrapper/maven-wrapper.jar
@@ -36,6 +39,19 @@ replay_pid*
 .project
 .settings/
 .vscode/
+
+# Local env files
+.env
+.env.*
+
+# AWS credentials
+.aws/
+
+# Secrets and keys
+*.pem
+*.key
+*.p12
+*.jks
 
 # OS files
 .DS_Store
