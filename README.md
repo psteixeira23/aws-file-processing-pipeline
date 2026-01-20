@@ -218,6 +218,7 @@ Project dashboard:
 - Use case tests: CreateJobUseCase flow and in-progress idempotency path
 - JUnit 5 + AssertJ for assertions, Mockito ready for mocks
 - Jacoco enforces 80% line coverage for application layer
+- JaCoCo XML report is generated during `mvn verify` for SonarCloud
 - Checkstyle validates code style during `mvn verify`
 - GitHub Actions runs `mvn verify` on every PR and main branch push
 - SonarCloud analysis runs in CI when secrets are configured
