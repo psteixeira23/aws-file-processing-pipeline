@@ -1,11 +1,11 @@
 # aws-file-processing-pipeline
 
 ## Badges
-[![CI](https://github.com/YOUR_GITHUB_ORG/aws-file-processing-pipeline/actions/workflows/ci.yml/badge.svg)](https://github.com/YOUR_GITHUB_ORG/aws-file-processing-pipeline/actions/workflows/ci.yml)
-[![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=YOUR_SONAR_PROJECT_KEY&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=YOUR_SONAR_PROJECT_KEY)
-[![Coverage](https://sonarcloud.io/api/project_badges/measure?project=YOUR_SONAR_PROJECT_KEY&metric=coverage)](https://sonarcloud.io/summary/new_code?id=YOUR_SONAR_PROJECT_KEY)
-[![Code Smells](https://sonarcloud.io/api/project_badges/measure?project=YOUR_SONAR_PROJECT_KEY&metric=code_smells)](https://sonarcloud.io/summary/new_code?id=YOUR_SONAR_PROJECT_KEY)
-[![Bugs](https://sonarcloud.io/api/project_badges/measure?project=YOUR_SONAR_PROJECT_KEY&metric=bugs)](https://sonarcloud.io/summary/new_code?id=YOUR_SONAR_PROJECT_KEY)
+[![CI](https://github.com/psteixeira23/aws-file-processing-pipeline/actions/workflows/ci.yml/badge.svg)](https://github.com/psteixeira23/aws-file-processing-pipeline/actions/workflows/ci.yml)
+[![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=psteixeira23_aws-file-processing-pipeline&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=psteixeira23_aws-file-processing-pipeline)
+[![Coverage](https://sonarcloud.io/api/project_badges/measure?project=psteixeira23_aws-file-processing-pipeline&metric=coverage)](https://sonarcloud.io/summary/new_code?id=psteixeira23_aws-file-processing-pipeline)
+[![Code Smells](https://sonarcloud.io/api/project_badges/measure?project=psteixeira23_aws-file-processing-pipeline&metric=code_smells)](https://sonarcloud.io/summary/new_code?id=psteixeira23_aws-file-processing-pipeline)
+[![Bugs](https://sonarcloud.io/api/project_badges/measure?project=psteixeira23_aws-file-processing-pipeline&metric=bugs)](https://sonarcloud.io/summary/new_code?id=psteixeira23_aws-file-processing-pipeline)
 
 ## Executive summary
 - Streaming CSV processing (no full-file load into memory)
@@ -154,10 +154,11 @@ Environment variables:
 - GitHub Actions workflow: `.github/workflows/ci.yml`
 - SonarCloud secrets: `SONAR_TOKEN`, `SONAR_PROJECT_KEY`, `SONAR_ORGANIZATION`
 - SonarCloud properties: `sonar-project.properties`
+- Maven plugin: `org.sonarsource.scanner.maven:sonar-maven-plugin`
 
 ## SonarCloud
 Project dashboard:
-`https://sonarcloud.io/project/overview?id=YOUR_SONAR_PROJECT_KEY`
+`https://sonarcloud.io/project/overview?id=psteixeira23_aws-file-processing-pipeline`
 
 ## Security and secret scanning
 - Gitleaks runs in CI to prevent accidental secret leaks
