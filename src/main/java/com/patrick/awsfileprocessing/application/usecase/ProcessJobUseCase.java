@@ -25,6 +25,14 @@ import org.slf4j.MDC;
 
 public final class ProcessJobUseCase {
   private static final Logger LOGGER = LoggerFactory.getLogger(ProcessJobUseCase.class);
+  private static final String METRIC_JOBS_PROCESSED = "jobs_processed";
+  private static final String METRIC_PROCESSING_TIME = "job_processing_time_ms";
+  private static final String OUTPUT_CONTENT_TYPE = "application/json";
+  private static final String TAG_STATUS = "status";
+  private static final String STATUS_SUCCESS = "success";
+  private static final String STATUS_FAILURE = "failure";
+  private static final Map<String, String> SUCCESS_TAGS = Map.of(TAG_STATUS, STATUS_SUCCESS);
+  private static final Map<String, String> FAILURE_TAGS = Map.of(TAG_STATUS, STATUS_FAILURE);
 
   private final ObjectStoragePort objectStoragePort;
   private final IdempotencyStorePort idempotencyStorePort;
@@ -52,103 +60,138 @@ public final class ProcessJobUseCase {
   }
 
   public void process(JobMessage message) {
-    Objects.requireNonNull(message, "message must not be null");
-    JobId jobId = JobId.fromString(message.jobId());
-    S3Location inputLocation = new S3Location(message.inputBucket(), message.inputKey());
-    S3Location outputLocation = new S3Location(message.outputBucket(), message.outputKey());
-
-    IdempotencyKey idempotencyKey = IdempotencyKey.of(jobId, message.checksum());
-
-    MDC.put("jobId", jobId.asString());
-    MDC.put("s3Key", inputLocation.key());
+    ProcessingContext context = buildContext(message);
+    MDC.put("jobId", context.jobId().asString());
+    MDC.put("s3Key", context.inputLocation().key());
     try {
-      if (idempotencyStorePort.isCompleted(idempotencyKey)) {
-        LOGGER.info(
-            "job_already_completed jobId={} inputBucket={} inputKey={} outputBucket={}"
-                + " outputKey={}",
-            jobId.asString(),
-            inputLocation.bucket(),
-            inputLocation.key(),
-            outputLocation.bucket(),
-            outputLocation.key());
-        return;
-      }
-
-      if (!idempotencyStorePort.tryAcquire(idempotencyKey)) {
-        LOGGER.info(
-            "job_already_in_progress jobId={} inputBucket={} inputKey={}",
-            jobId.asString(),
-            inputLocation.bucket(),
-            inputLocation.key());
-        return;
-      }
-
-      Instant startedAt = clockPort.now();
-      ObjectMetadata metadata = objectStoragePort.headObject(inputLocation);
-
-      CsvProcessingSummary summary;
-      try (InputStream inputStream = objectStoragePort.getObjectStream(inputLocation)) {
-        summary = csvStreamProcessor.process(inputStream, excludeHeader);
-      }
-
-      Instant finishedAt = clockPort.now();
-      long processingTimeMs = Duration.between(startedAt, finishedAt).toMillis();
-
-      ProcessingResult result =
-          new ProcessingResult(
-              jobId.asString(),
-              inputLocation.bucket(),
-              inputLocation.key(),
-              outputLocation.bucket(),
-              outputLocation.key(),
-              summary.totalLines(),
-              metadata.sizeBytes(),
-              summary.checksum(),
-              startedAt,
-              finishedAt,
-              processingTimeMs,
-              JobStatus.SUCCEEDED);
-
-      byte[] payload = JsonMapper.writeBytes(result);
-      objectStoragePort.putObject(outputLocation, payload, "application/json");
-
-      IdempotencyKey completedKey = IdempotencyKey.of(jobId, summary.checksum());
-      idempotencyStorePort.markCompleted(completedKey, outputLocation, summary.checksum());
-
-      metricsPort.incrementCounter("jobs_processed", Map.of("status", "success"));
-      metricsPort.recordTiming(
-          "job_processing_time_ms", processingTimeMs, Map.of("status", "success"));
-
-      LOGGER.info(
-          "job_processed jobId={} totalLines={} fileSizeBytes={} checksum={} processingTimeMs={}"
-              + " outputBucket={} outputKey={}",
-          jobId.asString(),
-          summary.totalLines(),
-          metadata.sizeBytes(),
-          summary.checksum(),
-          processingTimeMs,
-          outputLocation.bucket(),
-          outputLocation.key());
-    } catch (RuntimeException | Error e) {
-      metricsPort.incrementCounter("jobs_processed", Map.of("status", "failure"));
-      LOGGER.error(
-          "job_processing_failed jobId={} errorType={} message={}",
-          jobId.asString(),
-          e.getClass().getSimpleName(),
-          e.getMessage(),
-          e);
-      throw e;
+      processInternal(context);
     } catch (Exception e) {
-      metricsPort.incrementCounter("jobs_processed", Map.of("status", "failure"));
-      LOGGER.error(
-          "job_processing_failed jobId={} errorType={} message={}",
-          jobId.asString(),
-          e.getClass().getSimpleName(),
-          e.getMessage(),
-          e);
+      recordFailure(context.jobId(), e);
+      if (e instanceof RuntimeException runtimeException) {
+        throw runtimeException;
+      }
       throw new IllegalStateException("Job processing failed", e);
     } finally {
       MDC.clear();
     }
   }
+
+  private ProcessingContext buildContext(JobMessage message) {
+    Objects.requireNonNull(message, "message must not be null");
+    JobId jobId = JobId.fromString(message.jobId());
+    S3Location inputLocation = new S3Location(message.inputBucket(), message.inputKey());
+    S3Location outputLocation = new S3Location(message.outputBucket(), message.outputKey());
+    IdempotencyKey idempotencyKey = IdempotencyKey.of(jobId, message.checksum());
+    return new ProcessingContext(jobId, inputLocation, outputLocation, idempotencyKey);
+  }
+
+  private void processInternal(ProcessingContext context) throws Exception {
+    if (shouldSkip(context)) {
+      return;
+    }
+
+    Instant startedAt = clockPort.now();
+    ObjectMetadata metadata = objectStoragePort.headObject(context.inputLocation());
+    CsvProcessingSummary summary = processCsv(context.inputLocation());
+    Instant finishedAt = clockPort.now();
+    long processingTimeMs = Duration.between(startedAt, finishedAt).toMillis();
+
+    ProcessingResult result =
+        new ProcessingResult(
+            context.jobId().asString(),
+            context.inputLocation().bucket(),
+            context.inputLocation().key(),
+            context.outputLocation().bucket(),
+            context.outputLocation().key(),
+            summary.totalLines(),
+            metadata.sizeBytes(),
+            summary.checksum(),
+            startedAt,
+            finishedAt,
+            processingTimeMs,
+            JobStatus.SUCCEEDED);
+
+    writeResult(context.outputLocation(), result);
+    markCompleted(context.jobId(), context.outputLocation(), summary);
+    recordSuccess(processingTimeMs);
+    logSuccess(context, summary, metadata, processingTimeMs);
+  }
+
+  private boolean shouldSkip(ProcessingContext context) {
+    if (idempotencyStorePort.isCompleted(context.idempotencyKey())) {
+      LOGGER.info(
+          "job_already_completed jobId={} inputBucket={} inputKey={} outputBucket={} outputKey={}",
+          context.jobId().asString(),
+          context.inputLocation().bucket(),
+          context.inputLocation().key(),
+          context.outputLocation().bucket(),
+          context.outputLocation().key());
+      return true;
+    }
+
+    if (!idempotencyStorePort.tryAcquire(context.idempotencyKey())) {
+      LOGGER.info(
+          "job_already_in_progress jobId={} inputBucket={} inputKey={}",
+          context.jobId().asString(),
+          context.inputLocation().bucket(),
+          context.inputLocation().key());
+      return true;
+    }
+
+    return false;
+  }
+
+  private CsvProcessingSummary processCsv(S3Location inputLocation) throws Exception {
+    try (InputStream inputStream = objectStoragePort.getObjectStream(inputLocation)) {
+      return csvStreamProcessor.process(inputStream, excludeHeader);
+    }
+  }
+
+  private void writeResult(S3Location outputLocation, ProcessingResult result) {
+    byte[] payload = JsonMapper.writeBytes(result);
+    objectStoragePort.putObject(outputLocation, payload, OUTPUT_CONTENT_TYPE);
+  }
+
+  private void markCompleted(JobId jobId, S3Location outputLocation, CsvProcessingSummary summary) {
+    IdempotencyKey completedKey = IdempotencyKey.of(jobId, summary.checksum());
+    idempotencyStorePort.markCompleted(completedKey, outputLocation, summary.checksum());
+  }
+
+  private void recordSuccess(long processingTimeMs) {
+    metricsPort.incrementCounter(METRIC_JOBS_PROCESSED, SUCCESS_TAGS);
+    metricsPort.recordTiming(METRIC_PROCESSING_TIME, processingTimeMs, SUCCESS_TAGS);
+  }
+
+  private void recordFailure(JobId jobId, Exception exception) {
+    metricsPort.incrementCounter(METRIC_JOBS_PROCESSED, FAILURE_TAGS);
+    LOGGER.error(
+        "job_processing_failed jobId={} errorType={} message={}",
+        jobId.asString(),
+        exception.getClass().getSimpleName(),
+        exception.getMessage(),
+        exception);
+  }
+
+  private void logSuccess(
+      ProcessingContext context,
+      CsvProcessingSummary summary,
+      ObjectMetadata metadata,
+      long processingTimeMs) {
+    LOGGER.info(
+        "job_processed jobId={} totalLines={} fileSizeBytes={} checksum={} processingTimeMs={}"
+            + " outputBucket={} outputKey={}",
+        context.jobId().asString(),
+        summary.totalLines(),
+        metadata.sizeBytes(),
+        summary.checksum(),
+        processingTimeMs,
+        context.outputLocation().bucket(),
+        context.outputLocation().key());
+  }
+
+  private record ProcessingContext(
+      JobId jobId,
+      S3Location inputLocation,
+      S3Location outputLocation,
+      IdempotencyKey idempotencyKey) {}
 }

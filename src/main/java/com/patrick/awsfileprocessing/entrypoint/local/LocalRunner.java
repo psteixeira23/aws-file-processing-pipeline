@@ -24,56 +24,95 @@ public final class LocalRunner {
   private static final String DEFAULT_OUTPUT_BUCKET = "local-output";
 
   public static void main(String[] args) throws IOException {
+    Path inputPath = resolveInputPath(args);
+    if (inputPath == null) {
+      return;
+    }
+
+    AppConfig config = AppConfig.fromEnv();
+    LocalContext context = buildContext(config);
+    S3Location inputLocation = seedInput(context, inputPath);
+    JobId jobId = createJob(context, inputLocation);
+    JobMessage jobMessage = pollJob(context);
+    if (jobMessage == null) {
+      return;
+    }
+    processJob(context, jobMessage);
+    printOutput(context, jobId);
+  }
+
+  private static Path resolveInputPath(String[] args) {
     if (args.length < 1) {
       System.err.println("Usage: LocalRunner <path-to-csv>");
-      return;
+      return null;
     }
 
     Path inputPath = Path.of(args[0]);
     if (!Files.exists(inputPath)) {
       System.err.println("File not found: " + inputPath);
-      return;
+      return null;
     }
+    return inputPath;
+  }
 
-    AppConfig config = AppConfig.fromEnv();
+  private static LocalContext buildContext(AppConfig config) {
     String outputBucket =
         config.outputBucket() == null ? DEFAULT_OUTPUT_BUCKET : config.outputBucket();
+    return new LocalContext(
+        new InMemoryObjectStorageAdapter(),
+        new InMemoryJobQueueAdapter(),
+        new InMemoryIdempotencyStoreAdapter(),
+        outputBucket,
+        config.excludeHeader());
+  }
 
-    InMemoryObjectStorageAdapter objectStorage = new InMemoryObjectStorageAdapter();
-    InMemoryJobQueueAdapter jobQueue = new InMemoryJobQueueAdapter();
-    InMemoryIdempotencyStoreAdapter idempotencyStore = new InMemoryIdempotencyStoreAdapter();
-
+  private static S3Location seedInput(LocalContext context, Path inputPath) throws IOException {
     byte[] fileBytes = Files.readAllBytes(inputPath);
     String inputKey = inputPath.getFileName().toString();
     S3Location inputLocation = new S3Location(DEFAULT_INPUT_BUCKET, inputKey);
-    objectStorage.putObject(inputLocation, fileBytes, "text/csv");
+    context.objectStorage().putObject(inputLocation, fileBytes, "text/csv");
+    return inputLocation;
+  }
 
+  private static JobId createJob(LocalContext context, S3Location inputLocation) {
     CreateJobUseCase createJobUseCase =
-        new CreateJobUseCase(jobQueue, new SystemClockAdapter(), outputBucket);
-    JobId jobId = createJobUseCase.createJob(inputLocation);
+        new CreateJobUseCase(context.jobQueue(), new SystemClockAdapter(), context.outputBucket());
+    return createJobUseCase.createJob(inputLocation);
+  }
 
-    JobMessage jobMessage = jobQueue.poll();
+  private static JobMessage pollJob(LocalContext context) {
+    JobMessage jobMessage = context.jobQueue().poll();
     if (jobMessage == null) {
       System.err.println("No job message created.");
-      return;
     }
+    return jobMessage;
+  }
 
+  private static void processJob(LocalContext context, JobMessage jobMessage) {
     ProcessJobUseCase processJobUseCase =
         new ProcessJobUseCase(
-            objectStorage,
-            idempotencyStore,
+            context.objectStorage(),
+            context.idempotencyStore(),
             new NoopMetricsAdapter(),
             new SystemClockAdapter(),
             new CsvStreamProcessor(),
-            config.excludeHeader());
-
+            context.excludeHeader());
     processJobUseCase.process(jobMessage);
+  }
 
+  private static void printOutput(LocalContext context, JobId jobId) throws IOException {
     S3Location outputLocation =
-        new S3Location(outputBucket, OutputKeyConvention.outputKeyFor(jobId));
-    try (InputStream outputStream = objectStorage.getObjectStream(outputLocation)) {
+        new S3Location(context.outputBucket(), OutputKeyConvention.outputKeyFor(jobId));
+    try (InputStream outputStream = context.objectStorage().getObjectStream(outputLocation)) {
       String outputJson = new String(outputStream.readAllBytes(), StandardCharsets.UTF_8);
       System.out.println(outputJson);
     }
   }
+
+  private record LocalContext(
+      InMemoryObjectStorageAdapter objectStorage,
+      InMemoryJobQueueAdapter jobQueue,
+      InMemoryIdempotencyStoreAdapter idempotencyStore,
+      String outputBucket,
+      boolean excludeHeader) {}
 }

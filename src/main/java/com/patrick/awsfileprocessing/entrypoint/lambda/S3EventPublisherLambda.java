@@ -10,6 +10,8 @@ import com.patrick.awsfileprocessing.common.AppConfig;
 import com.patrick.awsfileprocessing.domain.S3Location;
 import com.patrick.awsfileprocessing.infrastructure.adapter.SystemClockAdapter;
 import com.patrick.awsfileprocessing.infrastructure.adapter.aws.SqsJobQueueAdapter;
+import java.util.Objects;
+import java.util.function.Consumer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.regions.Region;
@@ -18,7 +20,7 @@ import software.amazon.awssdk.services.sqs.SqsClient;
 public final class S3EventPublisherLambda implements RequestHandler<S3Event, Void> {
   private static final Logger LOGGER = LoggerFactory.getLogger(S3EventPublisherLambda.class);
 
-  private final CreateJobUseCase createJobUseCase;
+  private final Consumer<S3Location> jobCreator;
 
   public S3EventPublisherLambda() {
     AppConfig config =
@@ -28,7 +30,13 @@ public final class S3EventPublisherLambda implements RequestHandler<S3Event, Voi
 
     JobQueuePort jobQueuePort = new SqsJobQueueAdapter(sqsClient, config.jobQueueUrl());
     ClockPort clockPort = new SystemClockAdapter();
-    this.createJobUseCase = new CreateJobUseCase(jobQueuePort, clockPort, config.outputBucket());
+    CreateJobUseCase createJobUseCase =
+        new CreateJobUseCase(jobQueuePort, clockPort, config.outputBucket());
+    this.jobCreator = createJobUseCase::createJob;
+  }
+
+  S3EventPublisherLambda(Consumer<S3Location> jobCreator) {
+    this.jobCreator = Objects.requireNonNull(jobCreator, "jobCreator must not be null");
   }
 
   @Override
@@ -44,7 +52,7 @@ public final class S3EventPublisherLambda implements RequestHandler<S3Event, Voi
             record -> {
               String bucket = record.getS3().getBucket().getName();
               String key = record.getS3().getObject().getKey();
-              createJobUseCase.createJob(new S3Location(bucket, key));
+              jobCreator.accept(new S3Location(bucket, key));
             });
 
     return null;

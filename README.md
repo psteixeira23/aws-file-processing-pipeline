@@ -55,6 +55,7 @@ Build a production-grade, event-driven pipeline that processes CSV files uploade
 - Use Case / Command: `CreateJobUseCase` and `ProcessJobUseCase` are explicit application actions
 - DTO: `JobMessage` and `ProcessingResult` define stable message contracts
 - Idempotent Consumer (integration pattern): prevents duplicate processing on retries
+- Dependency Injection: Lambda handlers accept functional dependencies for isolated tests
 
 ## Event flow
 
@@ -148,6 +149,13 @@ Reports will be available at:
 ```
 target/site/jacoco/index.html
 ```
+
+## Testing scope
+
+- Functional tests validate AWS adapter request contracts via Mockito
+- In-memory adapters are exercised for local behavior
+- Local runner is validated end-to-end with a sample CSV
+- Mockito uses subclass mock maker for JDK 21 compatibility (`src/test/resources/mockito-extensions/org.mockito.plugins.MockMaker`)
 
 ## Configuration
 

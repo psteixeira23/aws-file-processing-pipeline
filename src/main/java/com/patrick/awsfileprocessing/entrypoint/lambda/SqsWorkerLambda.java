@@ -20,6 +20,8 @@ import com.patrick.awsfileprocessing.infrastructure.adapter.aws.S3ObjectStorageA
 import com.patrick.awsfileprocessing.infrastructure.adapter.inmemory.InMemoryIdempotencyStoreAdapter;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
+import java.util.function.Consumer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.regions.Region;
@@ -29,7 +31,7 @@ import software.amazon.awssdk.services.s3.S3Client;
 public final class SqsWorkerLambda implements RequestHandler<SQSEvent, SQSBatchResponse> {
   private static final Logger LOGGER = LoggerFactory.getLogger(SqsWorkerLambda.class);
 
-  private final ProcessJobUseCase processJobUseCase;
+  private final Consumer<JobMessage> jobProcessor;
 
   public SqsWorkerLambda() {
     AppConfig config = AppConfig.fromEnv().requireAwsRegion().requireDynamoTable();
@@ -42,7 +44,7 @@ public final class SqsWorkerLambda implements RequestHandler<SQSEvent, SQSBatchR
     MetricsPort metricsPort = new NoopMetricsAdapter();
     ClockPort clockPort = new SystemClockAdapter();
 
-    this.processJobUseCase =
+    ProcessJobUseCase processJobUseCase =
         new ProcessJobUseCase(
             objectStoragePort,
             idempotencyStorePort,
@@ -50,6 +52,11 @@ public final class SqsWorkerLambda implements RequestHandler<SQSEvent, SQSBatchR
             clockPort,
             new CsvStreamProcessor(),
             config.excludeHeader());
+    this.jobProcessor = processJobUseCase::process;
+  }
+
+  SqsWorkerLambda(Consumer<JobMessage> jobProcessor) {
+    this.jobProcessor = Objects.requireNonNull(jobProcessor, "jobProcessor must not be null");
   }
 
   @Override
@@ -63,7 +70,7 @@ public final class SqsWorkerLambda implements RequestHandler<SQSEvent, SQSBatchR
     for (SQSEvent.SQSMessage record : event.getRecords()) {
       try {
         JobMessage message = JsonMapper.read(record.getBody(), JobMessage.class);
-        processJobUseCase.process(message);
+        jobProcessor.accept(message);
       } catch (Exception e) {
         LOGGER.error(
             "sqs_message_failed messageId={} errorType={} message={}",
