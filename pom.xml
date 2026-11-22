@@ -13,11 +13,11 @@
         <maven.compiler.release>21</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <aws.sdk.version>2.25.45</aws.sdk.version>
-        <jackson.version>2.17.2</jackson.version>
+        <jackson.version>2.18.11</jackson.version>
         <slf4j.version>2.0.13</slf4j.version>
         <logback.version>1.5.6</logback.version>
         <junit.version>5.10.3</junit.version>
-        <assertj.version>3.26.3</assertj.version>
+        <assertj.version>3.27.7</assertj.version>
         <mockito.version>5.12.0</mockito.version>
         <lambda.core.version>1.2.2</lambda.core.version>
         <lambda.events.version>3.11.4</lambda.events.version>
